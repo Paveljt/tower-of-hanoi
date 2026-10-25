@@ -1,4 +1,5 @@
 import tkinter as tk
+import time
 from tkinter import ttk
 from collections import deque
 
@@ -32,7 +33,7 @@ class HanoiApp:
         self.root.configure(bg=BACKGROUND)
 
         self.disk_count = tk.IntVar(value=5)
-        self.speed = tk.IntVar(value=3)
+        self.speed = tk.DoubleVar(value=3)
         self.status = tk.StringVar()
         self.counter = tk.StringVar()
 
@@ -43,6 +44,9 @@ class HanoiApp:
 
         self.playing = False
         self.timer = None
+
+        self.animation_timer = None
+        self.animation = None
 
         self.build_interface()
         self.reset()
@@ -200,6 +204,8 @@ class HanoiApp:
     def reset(self):
         self.pause()
 
+        self.cancel_animation()
+
         number = self.disk_count.get()
         self.pegs = [list(range(number, 0, -1)), [], []]
         self.history = []
@@ -210,7 +216,9 @@ class HanoiApp:
         self.refresh()
 
     def refresh(self):
+        
         minimum = 2 ** self.disk_count.get() - 1
+        busy = self.playing or self.animation is not None
 
         self.counter.set(
             f"Moves: {len(self.history)}     Minimum: {minimum}"
@@ -224,7 +232,7 @@ class HanoiApp:
         self.step_button.configure(
             state=(
                 "disabled"
-                if self.playing or self.is_solved()
+                if busy or self.is_solved()
                 else "normal"
             )
         )
@@ -232,12 +240,64 @@ class HanoiApp:
         self.undo_button.configure(
             state=(
                 "normal"
-                if self.history and not self.playing
+                if self.history and not busy
                 else "disabled"
             )
         )
 
         self.draw()
+
+    def board_geometry(self):
+        width = max(10, self.canvas.winfo_width())
+        height = max(10, self.canvas.winfo_height())
+
+        section_width = width / 3
+        base_y = height - 42
+        disk_height = min(26, (height - 90) / 8)
+
+        return width, height, section_width, base_y, disk_height
+
+    def paint_disk(self, disk, center_x, center_y):
+        _, _, section_width, _, disk_height = (
+            self.board_geometry()
+        )
+
+        disk_width = section_width * (
+            0.23 + 0.63 * disk / self.disk_count.get()
+        )
+
+        left = center_x - disk_width / 2
+        right = center_x + disk_width / 2
+        top = center_y - disk_height / 2
+        bottom = center_y + disk_height / 2
+
+        self.canvas.create_rectangle(
+            left,
+            top,
+            right,
+            bottom,
+            fill=COLORS[disk - 1],
+            outline="#e3ead7",
+            width=1,
+        )
+
+        # A thin highlight gives the disk some depth.
+        self.canvas.create_line(
+            left + 2,
+            top + 3,
+            right - 2,
+            top + 3,
+            fill="#ffffff",
+            width=1,
+        )
+
+        self.canvas.create_text(
+            center_x,
+            center_y,
+            text=str(disk),
+            fill="#172017",
+            font=("Helvetica", 11, "bold"),
+        )
 
     def draw(self):
         if not self.pegs:
@@ -245,16 +305,13 @@ class HanoiApp:
 
         self.canvas.delete("all")
 
-        width = self.canvas.winfo_width()
-        height = self.canvas.winfo_height()
-
-        if width < 10 or height < 10:
-            return
-
-        section_width = width / 3
-        base_y = height - 42
-        disk_height = min(26, (height - 90) / 8)
-        number = self.disk_count.get()
+        (
+            width,
+            height,
+            section_width,
+            base_y,
+            disk_height,
+        ) = self.board_geometry()
 
         for index, stack in enumerate(self.pegs):
             center_x = section_width * (index + 0.5)
@@ -291,37 +348,27 @@ class HanoiApp:
             )
 
             for level, disk in enumerate(stack):
-                disk_width = section_width * (
-                    0.23 + 0.63 * disk / number
-                )
+                # The moving disk is drawn separately.
+                if (
+                    self.animation is not None
+                    and index == self.animation["destination"]
+                    and level == len(stack) - 1
+                ):
+                    continue
 
-                bottom = base_y - level * (disk_height + 3)
-                top = bottom - disk_height
+                center_y = (
+                    base_y
+                    - level * (disk_height + 3)
+                    - disk_height / 2
+                )
 
                 if (
                     self.selected == index
                     and level == len(stack) - 1
                 ):
-                    top -= 12
-                    bottom -= 12
+                    center_y -= 12
 
-                self.canvas.create_rectangle(
-                    center_x - disk_width / 2,
-                    top,
-                    center_x + disk_width / 2,
-                    bottom,
-                    fill=COLORS[disk - 1],
-                    outline="#e3ead7",
-                    width=1,
-                )
-
-                self.canvas.create_text(
-                    center_x,
-                    (top + bottom) / 2,
-                    text=str(disk),
-                    fill="#172017",
-                    font=("Helvetica", 11, "bold"),
-                )
+                self.paint_disk(disk, center_x, center_y)
 
             self.canvas.create_text(
                 center_x,
@@ -331,8 +378,111 @@ class HanoiApp:
                 font=("Helvetica", 13, "bold"),
             )
 
+        if self.animation is not None:
+            self.draw_moving_disk()
+
+    @staticmethod
+    def ease(value):
+        """Smooth acceleration and deceleration."""
+        return value * value * (3 - 2 * value)
+
+    def draw_moving_disk(self):
+        animation = self.animation
+
+        _, _, section_width, base_y, disk_height = (
+            self.board_geometry()
+        )
+
+        start_x = section_width * (
+            animation["source"] + 0.5
+        )
+        end_x = section_width * (
+            animation["destination"] + 0.5
+        )
+
+        start_y = (
+            base_y
+            - animation["source_level"] * (disk_height + 3)
+            - disk_height / 2
+            - animation["lift_offset"]
+        )
+
+        end_y = (
+            base_y
+            - animation["destination_level"]
+            * (disk_height + 3)
+            - disk_height / 2
+        )
+
+        # Above the tops of the rods.
+        travel_y = 20
+
+        progress = animation["progress"]
+
+        if progress < 0.3:
+            fraction = self.ease(progress / 0.3)
+
+            x = start_x
+            y = start_y + (travel_y - start_y) * fraction
+
+        elif progress < 0.7:
+            fraction = self.ease((progress - 0.3) / 0.4)
+
+            x = start_x + (end_x - start_x) * fraction
+            y = travel_y
+
+        else:
+            fraction = self.ease((progress - 0.7) / 0.3)
+
+            x = end_x
+            y = travel_y + (end_y - travel_y) * fraction
+
+        self.paint_disk(animation["disk"], x, y)
+
+    def animate_frame(self):
+        self.animation_timer = None
+
+        if self.animation is None:
+            return
+
+        elapsed = time.perf_counter() - self.animation["started"]
+        duration = self.animation["duration"]
+
+        self.animation["progress"] = min(1.0, elapsed / duration)
+
+        if self.animation["progress"] >= 1.0:
+            self.animation = None
+            self.refresh()
+
+            if self.playing:
+                if self.is_solved():
+                    self.pause()
+                    self.refresh()
+                else:
+                    self.timer = self.root.after(120, self.tick)
+
+            return
+
+        self.draw()
+
+        self.animation_timer = self.root.after(
+            16,
+            self.animate_frame,
+        )
+
+    def cancel_animation(self):
+        if self.animation_timer is not None:
+            self.root.after_cancel(self.animation_timer)
+            self.animation_timer = None
+
+        self.animation = None
+
     def on_board_click(self, event):
-        if self.playing or self.is_solved():
+        if (
+            self.playing
+            or self.animation is not None
+            or self.is_solved()
+        ):
             return
 
         section_width = self.canvas.winfo_width() / 3
@@ -368,7 +518,10 @@ class HanoiApp:
         self.refresh()
 
     def move_disk(self, source, destination):
-        if not self.pegs[source]:
+        if self.animation is not None:
+            return False
+
+        if source == destination or not self.pegs[source]:
             return False
 
         disk = self.pegs[source][-1]
@@ -379,9 +532,28 @@ class HanoiApp:
         ):
             return False
 
+        source_level = len(self.pegs[source]) - 1
+        destination_level = len(self.pegs[destination])
+
+        lift_offset = 12 if self.selected == source else 0
+
         self.pegs[source].pop()
         self.pegs[destination].append(disk)
         self.history.append((source, destination))
+
+        speed = float(self.speed.get())
+
+        self.animation = {
+            "disk": disk,
+            "source": source,
+            "destination": destination,
+            "source_level": source_level,
+            "destination_level": destination_level,
+            "lift_offset": lift_offset,
+            "started": time.perf_counter(),
+            "duration": 1.5 - speed * 0.22,
+            "progress": 0.0,
+        }
 
         if self.is_solved():
             minimum = 2 ** self.disk_count.get() - 1
@@ -401,10 +573,11 @@ class HanoiApp:
                 f"{'ABC'[source]} → {'ABC'[destination]}."
             )
 
+        self.animate_frame()
         return True
 
     def step(self):
-        if self.is_solved():
+        if self.animation is not None or self.is_solved():
             return
 
         self.selected = None
@@ -433,23 +606,26 @@ class HanoiApp:
             return
 
         self.playing = True
-        self.tick()
+
+        # If a disk is already moving, its completion
+        # callback will start the next automatic move.
+        if self.animation is None:
+            self.tick()
+        else:
+            self.refresh()
 
     def tick(self):
         self.timer = None
 
-        if not self.playing:
+        if not self.playing or self.animation is not None:
             return
-
-        self.step()
 
         if self.is_solved():
             self.pause()
             self.refresh()
             return
 
-        delay = int(1500 - float(self.speed.get()) * 240)
-        self.timer = self.root.after(max(100, delay), self.tick)
+        self.step()
 
     def pause(self):
         if self.timer is not None:
@@ -459,6 +635,8 @@ class HanoiApp:
         self.playing = False
 
     def undo(self):
+        if self.animation is not None:
+            return
         self.pause()
 
         if not self.history:
@@ -475,6 +653,7 @@ class HanoiApp:
 
     def close(self):
         self.pause()
+        self.cancel_animation()
         self.root.destroy()
 
 
