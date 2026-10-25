@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta
+    name="description"
+    content="Play Tower of Hanoi and explore an animated recursive solution."
+  >
+
+  <title>Tower of Hanoi</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+
+<body>
+  <main class="app">
+    <header>
+      <p class="eyebrow">THE RECURSION PLAYGROUND</p>
+      <h1>Tower of Hanoi</h1>
+      <p>Move every disk from A to C. Larger disks cannot sit on smaller ones.</p>
+    </header>
+
+    <section class="settings" aria-label="Puzzle settings">
+      <label for="disk-count">Disks</label>
+      <select id="disk-count">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5" selected>5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+      </select>
+
+      <label for="speed">Speed</label>
+      <input id="speed" type="range" min="1" max="5" value="3">
+    </section>
+
+    <section class="game" aria-label="Tower of Hanoi puzzle">
+      <div class="stats">
+        <p>Moves: <strong id="moves">0</strong></p>
+        <p>Minimum: <strong id="minimum">31</strong></p>
+      </div>
+
+      <div class="board" id="board">
+        <button class="tower" data-tower="0" aria-label="Tower A">
+          <span class="rod"></span>
+          <span class="disks"></span>
+          <span class="tower-name">A</span>
+        </button>
+
+        <button class="tower" data-tower="1" aria-label="Tower B">
+          <span class="rod"></span>
+          <span class="disks"></span>
+          <span class="tower-name">B</span>
+        </button>
+
+        <button class="tower" data-tower="2" aria-label="Tower C">
+          <span class="rod"></span>
+          <span class="disks"></span>
+          <span class="tower-name">C</span>
+        </button>
+      </div>
+
+      <p id="message" role="status" aria-live="polite">
+        Select a tower, then select a destination.
+      </p>
+
+      <div class="controls">
+        <button id="play" class="primary">Play solution</button>
+        <button id="step">Next move</button>
+        <button id="undo">Undo</button>
+        <button id="reset">Reset</button>
+      </div>
+    </section>
+
+    <section class="explanation">
+      <h2>How recursion solves it</h2>
+      <ol>
+        <li>Move the top n − 1 disks to the spare tower.</li>
+        <li>Move the largest disk to the destination.</li>
+        <li>Move the n − 1 disks onto the largest disk.</li>
+      </ol>
+
+      <pre><code>def solve(n, src, dst, via):
+    if n == 0:
+        return
+
+    solve(n - 1, src, via, dst)
+    move(src, dst)
+    solve(n - 1, via, dst, src)</code></pre>
+
+      <p>The minimum number of moves is <strong>2ⁿ − 1</strong>.</p>
+    </section>
+  </main>
+</body>
+</html>
